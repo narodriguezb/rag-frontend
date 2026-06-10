@@ -10,3 +10,4 @@ dist/
 # Testing / mutation
 reports/
 .stryker-tmp/
+coverage/

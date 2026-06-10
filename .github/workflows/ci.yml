@@ -1,0 +1,127 @@
+# Pipeline CI/CD del frontend (React + Vite + TypeScript).
+# - En PR a master: corre solo el job "quality" (gates de calidad y seguridad).
+# - En push/merge a master: corre "quality" y, si pasa, "deploy" a Firebase Hosting.
+name: CI/CD frontend
+
+on:
+  push:
+    branches: [master]        # merge a master -> calidad + deploy
+  pull_request:
+    branches: [master]        # PR contra master -> solo calidad
+  workflow_dispatch:          # ejecución manual desde Actions
+
+# id-token: write -> autenticación a Google/Firebase vía Workload Identity Federation.
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: rag-proyect-499005
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Job 1: calidad y seguridad. Gate previo al deploy.
+  # ----------------------------------------------------------------------------
+  quality:
+    runs-on: ubuntu-latest
+    env:
+      # Tokens externos; los pasos condicionales se saltan si están vacíos.
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    steps:
+      # Historial completo (fetch-depth: 0) para que SonarQube calcule el "new code".
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Node 20 con caché de npm.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Instala dependencias de forma reproducible desde package-lock.json.
+      - name: Install dependencies
+        run: npm ci
+
+      # Linter (ESLint). Falla si hay errores.
+      - name: Lint (eslint)
+        run: npm run lint
+
+      # Type-check + build de producción (tsc -b + vite build). Genera dist/.
+      # VITE_API_URL es la URL del backend (Cloud Run); se define como variable de Actions.
+      - name: Type-check + build
+        run: npm run build
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+
+      # Tests + cobertura (vitest). Genera coverage/lcov.info para SonarQube.
+      - name: Tests + coverage
+        run: npm run coverage
+
+      # Mutation testing (Stryker). Configurado con break threshold = 50% en stryker.conf.json.
+      - name: Mutation testing (stryker break >= 50%)
+        run: npm run mutation
+
+      # Trivy: escaneo de vulnerabilidades de archivos/dependencias. Solo falla por fixables.
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+
+      # Snyk: vulnerabilidades en dependencias npm (por defecto solo las de producción).
+      - name: Snyk dependency scan
+        if: ${{ env.SNYK_TOKEN != '' }}
+        uses: snyk/actions/node@master
+        with:
+          args: --severity-threshold=high
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      # SonarQube Cloud: análisis estático + cobertura. No bloqueante.
+      - name: SonarQube Cloud scan
+        if: ${{ env.SONAR_TOKEN != '' }}
+        continue-on-error: true
+        uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # ----------------------------------------------------------------------------
+  # Job 2: deploy a Firebase Hosting. Solo tras pasar "quality" y solo en push a master.
+  # ----------------------------------------------------------------------------
+  deploy:
+    needs: quality
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Build del sitio estático que se publicará (carpeta dist/).
+      - name: Build
+        run: npm run build
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+
+      # Autenticación a Google/Firebase vía WIF (sin claves JSON).
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/235944902030/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: gh-deployer@rag-proyect-499005.iam.gserviceaccount.com
+
+      # Publica dist/ en Firebase Hosting usando las credenciales del paso anterior.
+      - name: Deploy to Firebase Hosting
+        run: npx --yes firebase-tools@latest deploy --only hosting --project "$PROJECT_ID" --non-interactive

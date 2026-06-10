@@ -4,5 +4,6 @@
   "testRunner": "vitest",
   "reporters": ["html", "clear-text", "progress"],
   "coverageAnalysis": "perTest",
-  "mutate": ["src/api/client.ts", "src/hooks/useChat.ts", "src/components/ChatInput.tsx"]
+  "mutate": ["src/api/client.ts", "src/hooks/useChat.ts", "src/components/ChatInput.tsx"],
+  "thresholds": { "high": 80, "low": 60, "break": 50 }
 }
