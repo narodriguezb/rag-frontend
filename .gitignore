@@ -6,3 +6,7 @@ dist/
 
 # TS build info
 *.tsbuildinfo
+
+# Testing / mutation
+reports/
+.stryker-tmp/
