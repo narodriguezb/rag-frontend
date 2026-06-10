@@ -1,70 +1,64 @@
 # Pipeline CI/CD del frontend (React + Vite + TypeScript).
-# - En PR a master: corre solo el job "quality" (gates de calidad y seguridad).
-# - En push/merge a master: corre "quality" y, si pasa, "deploy" a Firebase Hosting.
+# - En PR a master: corren los gates (quality) + las reviews de Claude (code y security).
+# - En push/merge a master: corre quality y, si pasa, deploy a Firebase Hosting.
+# El bloqueo del deploy ante hallazgos de Claude se aplica vía ruleset de la rama master
+# (exige que los checks 'quality' y 'security_review' pasen para poder mergear).
 name: CI/CD frontend
 
 on:
   push:
     branches: [master]        # merge a master -> calidad + deploy
   pull_request:
-    branches: [master]        # PR contra master -> solo calidad
+    branches: [master]        # PR contra master -> calidad + reviews de Claude
   workflow_dispatch:          # ejecución manual desde Actions
 
-# id-token: write -> autenticación a Google/Firebase vía Workload Identity Federation.
+# id-token: write -> auth a Google/Firebase vía WIF (sin claves).
+# pull-requests: write -> que las reviews de Claude puedan comentar el PR.
 permissions:
   contents: read
   id-token: write
+  pull-requests: write
 
 env:
   PROJECT_ID: rag-proyect-499005
 
 jobs:
   # ----------------------------------------------------------------------------
-  # Job 1: calidad y seguridad. Gate previo al deploy.
+  # Job 1: calidad y seguridad. Gate del deploy.
   # ----------------------------------------------------------------------------
   quality:
     runs-on: ubuntu-latest
     env:
-      # Tokens externos; los pasos condicionales se saltan si están vacíos.
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
     steps:
-      # Historial completo (fetch-depth: 0) para que SonarQube calcule el "new code".
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0          # historial completo para SonarQube
 
-      # Node 20 con caché de npm.
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
-      # Instala dependencias de forma reproducible desde package-lock.json.
       - name: Install dependencies
         run: npm ci
 
-      # Linter (ESLint). Falla si hay errores.
       - name: Lint (eslint)
         run: npm run lint
 
-      # Type-check + build de producción (tsc -b + vite build). Genera dist/.
-      # VITE_API_URL es la URL del backend (Cloud Run); se define como variable de Actions.
-      - name: Type-check + build
+      - name: Type-check + build       # tsc -b + vite build; usa VITE_API_URL (var de Actions)
         run: npm run build
         env:
           VITE_API_URL: ${{ vars.VITE_API_URL }}
 
-      # Tests + cobertura (vitest). Genera coverage/lcov.info para SonarQube.
-      - name: Tests + coverage
+      - name: Tests + coverage         # vitest; genera coverage/lcov.info para SonarQube
         run: npm run coverage
 
-      # Mutation testing (Stryker). Configurado con break threshold = 50% en stryker.conf.json.
       - name: Mutation testing (stryker break >= 50%)
         run: npm run mutation
 
-      # Trivy: escaneo de vulnerabilidades de archivos/dependencias. Solo falla por fixables.
-      - name: Trivy filesystem scan
+      - name: Trivy filesystem scan    # vulnerabilidades de deps/archivos (solo fixables)
         uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: fs
@@ -74,8 +68,7 @@ jobs:
           exit-code: '1'
           format: table
 
-      # Snyk: vulnerabilidades en dependencias npm (por defecto solo las de producción).
-      - name: Snyk dependency scan
+      - name: Snyk dependency scan     # vulnerabilidades de dependencias npm (prod)
         if: ${{ env.SNYK_TOKEN != '' }}
         uses: snyk/actions/node@master
         with:
@@ -83,8 +76,7 @@ jobs:
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
-      # SonarQube Cloud: análisis estático + cobertura. No bloqueante.
-      - name: SonarQube Cloud scan
+      - name: SonarQube Cloud scan     # análisis estático + cobertura (no bloqueante)
         if: ${{ env.SONAR_TOKEN != '' }}
         continue-on-error: true
         uses: SonarSource/sonarqube-scan-action@v4
@@ -92,7 +84,51 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   # ----------------------------------------------------------------------------
-  # Job 2: deploy a Firebase Hosting. Solo tras pasar "quality" y solo en push a master.
+  # Job 2: revisión de código con Claude (equiv. /code-review). Solo en PR. Advisory.
+  # ----------------------------------------------------------------------------
+  code_review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this pull request for correctness bugs, code quality,
+            best practices and potential security issues. Be concise and
+            post the findings as PR review comments.
+          claude_args: "--model claude-sonnet-4-6 --max-turns 6"
+
+  # ----------------------------------------------------------------------------
+  # Job 3: revisión de seguridad con Claude (equiv. /security-review). Solo en PR.
+  # GATE DURO: si findings-count > 0, el job falla y el ruleset bloquea el merge.
+  # ----------------------------------------------------------------------------
+  security_review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+      - id: sec
+        uses: anthropics/claude-code-security-review@main
+        with:
+          claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          comment-pr: 'true'
+          claude-model: 'claude-sonnet-4-6'
+          exclude-directories: 'node_modules,dist,build,coverage,reports'
+      - name: Fail if security findings
+        if: ${{ steps.sec.outputs.findings-count > 0 }}
+        run: |
+          echo "Claude security review encontró ${{ steps.sec.outputs.findings-count }} hallazgo(s) — bloqueando."
+          exit 1
+
+  # ----------------------------------------------------------------------------
+  # Job 4: deploy a Firebase Hosting. Solo tras 'quality' y solo en push a master.
   # ----------------------------------------------------------------------------
   deploy:
     needs: quality
@@ -109,19 +145,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Build del sitio estático que se publicará (carpeta dist/).
       - name: Build
         run: npm run build
         env:
           VITE_API_URL: ${{ vars.VITE_API_URL }}
 
-      # Autenticación a Google/Firebase vía WIF (sin claves JSON).
       - id: auth
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: projects/235944902030/locations/global/workloadIdentityPools/github-pool/providers/github-provider
           service_account: gh-deployer@rag-proyect-499005.iam.gserviceaccount.com
 
-      # Publica dist/ en Firebase Hosting usando las credenciales del paso anterior.
       - name: Deploy to Firebase Hosting
         run: npx --yes firebase-tools@latest deploy --only hosting --project "$PROJECT_ID" --non-interactive
