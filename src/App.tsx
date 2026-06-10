@@ -3,6 +3,8 @@ import ChatMessages from "./components/ChatMessages";
 import ChatInput from "./components/ChatInput";
 import { useChat } from "./hooks/useChat";
 
+const BUILD_VERSION = (import.meta.env.VITE_BUILD_VERSION ?? "local").slice(0, 7);
+
 export default function App() {
   const { messages, isLoading, sendMessage } = useChat();
 
@@ -16,6 +18,9 @@ export default function App() {
             <ChatInput onSend={sendMessage} disabled={isLoading} />
           </div>
         </main>
+      </div>
+      <div className="pointer-events-none fixed bottom-2 right-3 z-50 rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-secondary">
+        build: {BUILD_VERSION}
       </div>
     </div>
   );
