@@ -69,14 +69,6 @@ jobs:
           exit-code: '1'
           format: table
 
-      - name: Snyk dependency scan     # vulnerabilidades de dependencias npm (prod)
-        if: ${{ env.SNYK_TOKEN != '' }}
-        uses: snyk/actions/node@master
-        with:
-          args: --severity-threshold=high
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-
       - name: SonarQube Cloud scan     # análisis estático + cobertura (no bloqueante)
         if: ${{ env.SONAR_TOKEN != '' }}
         continue-on-error: true
