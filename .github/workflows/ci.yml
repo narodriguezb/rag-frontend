@@ -51,6 +51,7 @@ jobs:
         run: npm run build
         env:
           VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_BUILD_VERSION: ${{ github.sha }}
 
       - name: Tests + coverage         # vitest; genera coverage/lcov.info para SonarQube
         run: npm run coverage
@@ -59,7 +60,7 @@ jobs:
         run: npm run mutation
 
       - name: Trivy filesystem scan    # vulnerabilidades de deps/archivos (solo fixables)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
           scan-ref: .
@@ -149,6 +150,7 @@ jobs:
         run: npm run build
         env:
           VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_BUILD_VERSION: ${{ github.sha }}
 
       - id: auth
         uses: google-github-actions/auth@v2

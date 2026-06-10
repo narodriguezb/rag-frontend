@@ -11,3 +11,7 @@ dist/
 reports/
 .stryker-tmp/
 coverage/
+
+# Firebase
+.firebase/
+firebase-debug.log
