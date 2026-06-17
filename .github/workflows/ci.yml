@@ -69,10 +69,19 @@ jobs:
           exit-code: '1'
           format: table
 
+      - name: Snyk scan (dependencias npm)   # SCA de Snyk; advisory (no bloquea el deploy)
+        if: ${{ env.SNYK_TOKEN != '' }}
+        continue-on-error: true
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
+
       - name: SonarQube Cloud scan     # análisis estático + cobertura (no bloqueante)
         if: ${{ env.SONAR_TOKEN != '' }}
         continue-on-error: true
-        uses: SonarSource/sonarqube-scan-action@v4
+        uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
