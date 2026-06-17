@@ -53,9 +53,13 @@ npm run preview       # Preview the production build locally
 ### Markdown
 Assistant answers are rendered with `react-markdown` + `remark-gfm`. Markdown element styling lives under the `.markdown` class in `src/index.css`.
 
+### Observability (Sentry)
+Error and performance monitoring via `@sentry/react`, initialized in `src/observability/sentry.ts` (`initSentry()`), wired in `src/main.tsx` (init + `Sentry.ErrorBoundary`). `useChat` reports chat errors with `Sentry.captureException`. **It is a no-op unless `VITE_SENTRY_DSN` is set**, so it never breaks local dev without a DSN. In CI the build receives the DSN from the GitHub secret `VITE_SENTRY_DSN`.
+
 ## Environment Variables
 Vite only exposes vars prefixed with `VITE_`:
 - `VITE_API_URL`: Backend API base URL (default `http://localhost:8000/api`)
+- `VITE_SENTRY_DSN`: Sentry DSN (optional; Sentry is disabled when empty)
 
 Files:
 - `.env`: Local development (gitignored)

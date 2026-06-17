@@ -12,7 +12,7 @@ Resumen y enlace en el [README](README.md#cicd). Definición: [`.github/workflow
 1. [Visión general](#1-visión-general)
 2. [Disparadores](#2-disparadores)
 3. [Job `quality`](#3-job-quality)
-4. [Reviews con Claude (`code_review` / `security_review`)](#4-reviews-con-claude)
+4. [Reviews con Gemini (`code_review` / `security_review`)](#4-reviews-con-gemini)
 5. [Job `deploy`](#5-job-deploy)
 6. [Protección de rama (ruleset)](#6-protección-de-rama-ruleset)
 7. [Autenticación: Workload Identity Federation](#7-autenticación-workload-identity-federation)
@@ -30,9 +30,9 @@ seguridad) en cada PR a `master`, y **deploy** a Firebase Hosting al mergear a `
 
 ```
                     ┌─────────────────────── PR a master ───────────────────────┐
-   commit  ─────►   │  quality            code_review (Claude)   security_review │
-   en una rama      │  (lint, build,      (comenta el diff,      (Claude; falla  │
-                    │   tests, mutation)   advisory)             si hay hallazgos)│
+   commit  ─────►   │  quality            code_review (Gemini)   security_review │
+   en una rama      │  (lint, build,      (comenta el diff,      (Gemini;        │
+                    │   tests, mutation)   advisory)             advisory)        │
                     └────────────────────────────┬───────────────────────────────┘
                                                   │  (ruleset exige quality + security_review)
                                                   ▼
@@ -46,7 +46,8 @@ seguridad) en cada PR a `master`, y **deploy** a Firebase Hosting al mergear a `
 |-----|--------|--------------------|
 | `quality` | `pull_request` + `push` a master | **Sí** (check requerido) |
 | `code_review` | `pull_request` | No (advisory) |
-| `security_review` | `pull_request` | **Sí** (check requerido) |
+| `security_review` | `pull_request` | No (advisory; el check es requerido pero ya no falla por hallazgos) |
+| `security_report` | `pull_request` | No (informativo; comentario sticky) |
 | `deploy` | `push` a master | — (corre post-merge) |
 
 ---
@@ -73,8 +74,8 @@ seguridad) en cada PR a `master`, y **deploy** a Firebase Hosting al mergear a `
 | Trivy | `aquasecurity/trivy-action@master` | escaneo de vulnerabilidades (filesystem/deps) |
 | SonarQube Cloud | `SonarSource/sonarqube-scan-action@v4` | análisis estático + cobertura |
 | Snyk | GitHub App (check `security/snyk`) | vulnerabilidades de deps (aparte del workflow) |
-| Claude code review | `anthropics/claude-code-action@v1` | revisión de código (advisory) |
-| Claude security review | `anthropics/claude-code-security-review@main` | revisión de seguridad (gate) |
+| Gemini code review | `google-github-actions/run-gemini-cli@v0.1.22` (Vertex AI vía WIF) | revisión de código (advisory) |
+| Gemini security review | `google-github-actions/run-gemini-cli@v0.1.22` (Vertex AI vía WIF) | revisión de seguridad (advisory) |
 
 ### Build y deploy
 | Herramienta | Versión / ref | Rol |
@@ -105,12 +106,12 @@ on:
   push:
     branches: [master]   # merge a master -> quality + deploy
   pull_request:
-    branches: [master]   # PR -> quality + reviews de Claude
+    branches: [master]   # PR -> quality + reviews de Gemini
   workflow_dispatch:     # ejecución manual
 ```
 
 Permisos del `GITHUB_TOKEN`: `contents: read`, `id-token: write` (WIF) y
-`pull-requests: write` (para que las reviews de Claude comenten).
+`pull-requests: write` (para que las reviews de Gemini comenten).
 
 ---
 
@@ -131,27 +132,53 @@ Runner `ubuntu-latest`, Node 20 con caché de npm. Pasos en orden:
 
 ---
 
-## 4. Reviews con Claude
+## 4. Reviews con Gemini
 
-Dos jobs independientes que solo corren en `pull_request` (revisan el *diff*).
+Dos jobs independientes que solo corren en `pull_request` (revisan el *diff*). Ambos usan
+`google-github-actions/run-gemini-cli@v0.1.22` con `use_vertex_ai: true`, modelo
+`gemini-2.5-flash`, autenticando a Vertex AI por **WIF** (mismo provider y SA `gh-deployer@` que el
+deploy; la SA tiene `roles/aiplatform.user`). **No se usa API key.**
+
+```yaml
+- uses: google-github-actions/run-gemini-cli@v0.1.22
+  env:
+    GEMINI_MODEL: gemini-2.5-flash
+  with:
+    use_vertex_ai: true
+    gcp_workload_identity_provider: projects/235944902030/.../providers/github-provider
+    gcp_service_account: gh-deployer@rag-proyect-499005.iam.gserviceaccount.com
+    gcp_project_id: rag-proyect-499005
+    gcp_location: us-central1
+    gcp_token_format: access_token
+    prompt: |
+      ... (review de código / de seguridad)
+```
 
 ### `code_review` (advisory)
 
-- Action: `anthropics/claude-code-action@v1`, modelo `claude-sonnet-4-6`.
 - Comenta el PR (bugs / calidad / buenas prácticas). **No bloquea** el merge.
-- Requiere la **GitHub App de Claude** (https://github.com/apps/claude) instalada en el repo.
 
-### `security_review` (gate)
+### `security_review` (advisory)
 
-- Action: `anthropics/claude-code-security-review@main`, modelo `claude-sonnet-4-6`.
-- Audita el diff; un paso posterior hace `exit 1` si `findings-count > 0`:
+- Audita el diff buscando vulnerabilidades (XSS, secrets, deps inseguras…) y comenta los hallazgos.
+- **Ya NO es un gate duro.** Antes (con Claude) un paso hacía `exit 1` si `findings-count > 0` y
+  bloqueaba el merge; tras la migración a Gemini la review es **advisory** (solo comenta). El check
+  sigue siendo requerido por el ruleset, pero pasa siempre.
 
-  ```yaml
-  - name: Fail if security findings
-    if: ${{ steps.sec.outputs.findings-count > 0 }}
-    run: exit 1
-  ```
-- Es check **requerido** → si Claude encuentra algo, **bloquea el merge**.
+> Migrado desde `anthropics/claude-code-action` y `claude-code-security-review`
+> (este último no soportaba Vertex). Mismo criterio que el backend.
+
+### `security_report` (reporte consolidado, no bloqueante)
+
+Job extra (solo en `pull_request`) que junta la salida de seguridad en un **comentario sticky** del
+PR (se actualiza en cada push):
+
+- Corre **Trivy en modo reporte** (`CRITICAL,HIGH,MEDIUM`, **incluye sin-fix**, `exit-code: 0`),
+  arma una tabla markdown con `jq` y la postea con `marocchino/sticky-pull-request-comment@v2`
+  (header `security-report`).
+- Apunta además a los hallazgos de **Gemini** (que comenta aparte), **Snyk** y **SonarQube**.
+- **No bloquea.** El gate determinístico sigue siendo el Trivy del job `quality` (CRITICAL/HIGH con
+  fix); este reporte muestra el panorama completo (incluye MEDIUM y sin-fix).
 
 ---
 
@@ -188,8 +215,9 @@ const BUILD_VERSION = (import.meta.env.VITE_BUILD_VERSION ?? "local").slice(0, 7
 - **Required status checks**: `quality` y `security_review`.
 - Bloquea borrado y force-push (`deletion`, `non_fast_forward`).
 
-Si el `security_review` de Claude falla, **el PR no se puede mergear** → no hay deploy.
-`code_review`, `SonarQube` y el check de la app de Snyk no son requeridos (informativos).
+El merge exige que `quality` y `security_review` pasen. Tras la migración a Gemini, el
+`security_review` es **advisory** (no falla por hallazgos), así que el gate real del deploy es
+`quality`. `code_review`, `SonarQube` y el check de la app de Snyk no son requeridos (informativos).
 
 > Los rulesets en repos privados requieren GitHub Pro; por eso este repo es **público**.
 
@@ -205,7 +233,8 @@ GitHub emite un token OIDC que se intercambia por credenciales de GCP/Firebase (
 | OIDC Provider | `github-provider` (condición: `repository_owner == narodriguezb`) |
 | Service Account | `gh-deployer@rag-proyect-499005.iam.gserviceaccount.com` |
 
-La SA tiene `roles/firebasehosting.admin` para publicar en Hosting.
+La SA tiene `roles/firebasehosting.admin` para publicar en Hosting y `roles/aiplatform.user` para
+las reviews con Gemini en Vertex AI.
 
 ---
 
@@ -215,9 +244,13 @@ GitHub → *Settings → Secrets and variables → Actions*.
 
 | Nombre | Tipo | Uso | Si falta… |
 |--------|------|-----|-----------|
-| `ANTHROPIC_API_KEY` | secret | reviews de Claude | los reviews no pueden correr |
 | `SONAR_TOKEN` | secret | SonarQube Cloud | el step de Sonar se salta |
+| `SNYK_TOKEN` | secret | Snyk SCA | el step de Snyk se salta |
+| `VITE_SENTRY_DSN` | secret | DSN de Sentry inyectado en el build | Sentry queda inactivo (no-op) |
 | `VITE_API_URL` | **variable** | URL del backend usada en el build (ej. `https://<cloud-run>/api`) | el build usa el default de `client.ts` |
+
+> Tras la migración a Gemini, **ya no se usa `ANTHROPIC_API_KEY`**: las reviews autentican a Vertex
+> AI por **WIF** (sin secrets de LLM).
 
 ---
 
@@ -248,9 +281,9 @@ npm run mutation
 
 | Síntoma | Causa | Solución |
 |---------|-------|----------|
-| `code_review` falla en ~25s: *Claude Code is not installed* | falta la GitHub App de Claude en este repo | instalar https://github.com/apps/claude |
-| `code_review` falla: *Workflow validation failed... identical content on default branch* | el PR modifica `ci.yml` | normal al cambiar el workflow; se resuelve al mergear |
-| `security_review` falla con `findings-count > 0` | Claude encontró un hallazgo real | corregir el hallazgo (es el gate funcionando) |
+| `code_review`/`security_review` falla autenticando a GCP | el SA `gh-deployer@` no tiene `roles/aiplatform.user`, o el WIF no resuelve | otorgar el rol; verificar provider/SA del WIF |
+| Gemini responde `404 model not found` | id de modelo inválido para la región | usar `gemini-2.5-flash` en `us-central1` |
+| Gemini responde `429 RESOURCE_EXHAUSTED` | cuota del modelo agotada/en 0 | revisar cuotas de Vertex (en free trial no se pueden subir) |
 | El badge muestra `build: local` | build sin `VITE_BUILD_VERSION` (p. ej. local) | en CI se inyecta `${{ github.sha }}` automáticamente |
 | `firebase deploy` local: *Failed to get Firebase project* | `firebase-tools` no toma bien las ADC | en CI usa WIF; en local, `firebase login` o desplegar vía la API REST de Hosting |
 

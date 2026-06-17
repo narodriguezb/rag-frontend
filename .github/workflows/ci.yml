@@ -1,19 +1,18 @@
 # Pipeline CI/CD del frontend (React + Vite + TypeScript).
-# - En PR a master: corren los gates (quality) + las reviews de Claude (code y security).
+# - En PR a master: corren los gates (quality) + las reviews de Gemini (code y security, advisory).
 # - En push/merge a master: corre quality y, si pasa, deploy a Firebase Hosting.
-# El bloqueo del deploy ante hallazgos de Claude se aplica vía ruleset de la rama master
-# (exige que los checks 'quality' y 'security_review' pasen para poder mergear).
+# El ruleset de master exige que los checks 'quality' y 'security_review' pasen para poder mergear.
 name: CI/CD frontend
 
 on:
   push:
     branches: [master]        # merge a master -> calidad + deploy
   pull_request:
-    branches: [master]        # PR contra master -> calidad + reviews de Claude
+    branches: [master]        # PR contra master -> calidad + reviews de Gemini
   workflow_dispatch:          # ejecución manual desde Actions
 
-# id-token: write -> auth a Google/Firebase vía WIF (sin claves).
-# pull-requests: write -> que las reviews de Claude puedan comentar el PR.
+# id-token: write -> auth a Google/Firebase/Vertex vía WIF (sin claves).
+# pull-requests: write -> que las reviews de Gemini puedan comentar el PR.
 permissions:
   contents: read
   id-token: write
@@ -52,6 +51,7 @@ jobs:
         env:
           VITE_API_URL: ${{ vars.VITE_API_URL }}
           VITE_BUILD_VERSION: ${{ github.sha }}
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
 
       - name: Tests + coverage         # vitest; genera coverage/lcov.info para SonarQube
         run: npm run coverage
@@ -85,9 +85,7 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-  # ----------------------------------------------------------------------------
-  # Job 2: revisión de código con Claude (equiv. /code-review). Solo en PR. Advisory.
-  # ----------------------------------------------------------------------------
+  # Job 2: revisión de código con Gemini (run-gemini-cli sobre Vertex AI). Solo en PR. Advisory.
   code_review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -95,19 +93,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
-      - uses: anthropics/claude-code-action@v1
+      - uses: google-github-actions/run-gemini-cli@v0.1.22
+        env:
+          GEMINI_MODEL: gemini-2.5-flash
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          use_vertex_ai: true
+          gcp_workload_identity_provider: projects/235944902030/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          gcp_service_account: gh-deployer@rag-proyect-499005.iam.gserviceaccount.com
+          gcp_project_id: rag-proyect-499005
+          gcp_location: us-central1
+          gcp_token_format: access_token
           prompt: |
-            Review this pull request for correctness bugs, code quality,
-            best practices and potential security issues. Be concise and
-            post the findings as PR review comments.
-          claude_args: "--model claude-sonnet-4-6 --max-turns 6"
+            You are reviewing a pull request in this React + Vite + TypeScript repository.
+            Inspect the PR diff for correctness bugs, code quality and best practices.
+            Be concise and post your findings as comments on the pull request using the
+            available GitHub tools.
 
-  # ----------------------------------------------------------------------------
-  # Job 3: revisión de seguridad con Claude (equiv. /security-review). Solo en PR.
-  # GATE DURO: si findings-count > 0, el job falla y el ruleset bloquea el merge.
-  # ----------------------------------------------------------------------------
+  # Job 3: revisión de seguridad con Gemini (run-gemini-cli sobre Vertex AI). Solo en PR. Advisory.
   security_review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -116,18 +118,75 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 2
-      - id: sec
-        uses: anthropics/claude-code-security-review@main
+      - uses: google-github-actions/run-gemini-cli@v0.1.22
+        env:
+          GEMINI_MODEL: gemini-2.5-flash
         with:
-          claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-          comment-pr: 'true'
-          claude-model: 'claude-sonnet-4-6'
-          exclude-directories: 'node_modules,dist,build,coverage,reports'
-      - name: Fail if security findings
-        if: ${{ steps.sec.outputs.findings-count > 0 }}
+          use_vertex_ai: true
+          gcp_workload_identity_provider: projects/235944902030/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          gcp_service_account: gh-deployer@rag-proyect-499005.iam.gserviceaccount.com
+          gcp_project_id: rag-proyect-499005
+          gcp_location: us-central1
+          gcp_token_format: access_token
+          prompt: |
+            You are performing a security review of this pull request (React + Vite + TypeScript
+            frontend). Analyze the PR diff for security vulnerabilities (XSS, injection, leaked
+            secrets, unsafe DOM/dangerouslySetInnerHTML, insecure dependencies, exposed tokens).
+            Ignore the node_modules, dist, build, coverage and reports directories. Post concise
+            findings as pull request comments. This review is advisory and does not block.
+
+  # Job 3b: reporte de seguridad consolidado (sticky comment). Solo en PR. No bloqueante.
+  security_report:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy (reporte JSON, no bloqueante)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: false
+          format: json
+          output: trivy.json
+          exit-code: '0'
+
+      - name: Construir reporte
         run: |
-          echo "Claude security review encontró ${{ steps.sec.outputs.findings-count }} hallazgo(s) — bloqueando."
-          exit 1
+          total=$(jq '[.Results[]?.Vulnerabilities[]?] | length' trivy.json)
+          crit=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' trivy.json)
+          high=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' trivy.json)
+          med=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="MEDIUM")] | length' trivy.json)
+          rows=$(jq -r '[.Results[]?.Vulnerabilities[]?] | sort_by(.Severity) | .[:25] | .[] | "| \(.Severity) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion // "—") | \(.VulnerabilityID) |"' trivy.json)
+          {
+            echo "## 🔐 Reporte de seguridad del PR (no bloqueante)"
+            echo ""
+            echo "### Trivy — dependencias y archivos"
+            echo "Total: **$total** · CRITICAL: **$crit** · HIGH: **$high** · MEDIUM: **$med**"
+            echo ""
+            if [ -n "$rows" ]; then
+              echo "| Sev | Paquete | Instalada | Fix | ID |"
+              echo "|---|---|---|---|---|"
+              echo "$rows"
+              if [ "$total" -gt 25 ]; then echo ""; echo "_…mostrando 25 de $total._"; fi
+            else
+              echo "✅ Sin vulnerabilidades detectadas por Trivy."
+            fi
+            echo ""
+            echo "---"
+            echo "🤖 **Gemini security review** comenta sus hallazgos por separado en este PR."
+            echo "📊 **Snyk / SonarQube**: ver sus checks/dashboards (advisory)."
+            echo ""
+            echo "> Reporte informativo. El gate real sigue siendo \`quality\`: Trivy bloquea ahí las vulnerabilidades con fix de severidad alta; este reporte muestra el panorama completo (incluye MEDIUM y sin-fix)."
+          } > security-report.md
+
+      - name: Comentario sticky en el PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: security-report
+          path: security-report.md
 
   # ----------------------------------------------------------------------------
   # Job 4: deploy a Firebase Hosting. Solo tras 'quality' y solo en push a master.
@@ -152,6 +211,7 @@ jobs:
         env:
           VITE_API_URL: ${{ vars.VITE_API_URL }}
           VITE_BUILD_VERSION: ${{ github.sha }}
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
 
       - id: auth
         uses: google-github-actions/auth@v2
