@@ -283,7 +283,7 @@ npm run mutation
 |---------|-------|----------|
 | `code_review`/`security_review` falla autenticando a GCP | el SA `gh-deployer@` no tiene `roles/aiplatform.user`, o el WIF no resuelve | otorgar el rol; verificar provider/SA del WIF |
 | Gemini CLI: *not running in a trusted directory* | feature de "trusted folders" en modo headless | setear `GEMINI_CLI_TRUST_WORKSPACE: "true"` en el `env` del step de `run-gemini-cli` |
-| Gemini responde `404 model not found` (`gemini-3.1-pro-preview` / `gemini-3.1-flash-lite`) | la gemini-cli ignora `GEMINI_MODEL` y su *model router* usa modelos 3.x no disponibles | fijar el modelo con el input `gemini_model: gemini-2.5-flash` y desactivar el router con `settings: '{"experimental":{"useModelRouter":false}}'` |
+| Gemini responde `404 model not found` (`gemini-3.x...`) | la gemini-cli **0.46** ignora `--model`/`GEMINI_MODEL`/settings y defaultea a Gemini 3.x + su *model router* | **pinear `gemini_cli_version: "0.45.0"`** (que sí respeta el modelo), `gemini_model: gemini-2.5-flash` y `settings: '{"model":{"name":"gemini-2.5-flash"},"experimental":{"useModelRouter":false}}'` |
 | Gemini responde `429 RESOURCE_EXHAUSTED` | cuota del modelo agotada/en 0 | revisar cuotas de Vertex (en free trial no se pueden subir) |
 | El badge muestra `build: local` | build sin `VITE_BUILD_VERSION` (p. ej. local) | en CI se inyecta `${{ github.sha }}` automáticamente |
 | `firebase deploy` local: *Failed to get Firebase project* | `firebase-tools` no toma bien las ADC | en CI usa WIF; en local, `firebase login` o desplegar vía la API REST de Hosting |
