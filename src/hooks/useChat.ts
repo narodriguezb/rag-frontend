@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { postQuery } from "../api/client";
+import { Sentry } from "../observability/sentry";
 import type { ChatMessage } from "../types";
 
 const WELCOME_MESSAGE: ChatMessage = {
@@ -45,6 +46,7 @@ export function useChat() {
           },
         ]);
       } catch (error) {
+        Sentry.captureException(error, { tags: { feature: "chat" } });
         const message =
           error instanceof Error ? error.message : "Something went wrong";
         setMessages((prev) => [

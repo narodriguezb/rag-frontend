@@ -33,17 +33,23 @@ src/
   api/client.ts          typed fetch wrappers (query, courses)
   hooks/useChat.ts        chat + session state
   components/             Sidebar, ChatMessages, Message, ChatInput, ...
+  observability/sentry.ts Sentry init (no-op without DSN)
   types.ts                shared API/domain types
 ```
+
+## Observability
+
+Error + performance monitoring via **Sentry** (`@sentry/react`). Set `VITE_SENTRY_DSN` (in `.env`
+locally, GitHub secret `VITE_SENTRY_DSN` in CI) to enable it; without a DSN it is a no-op.
 
 ## CI/CD
 
 Pipeline de GitHub Actions (`.github/workflows/ci.yml`): en cada **PR a `master`** corren los
-gates de calidad y las reviews de Claude; al **mergear a `master`** se despliega a Firebase Hosting
+gates de calidad y las reviews de Gemini; al **mergear a `master`** se despliega a Firebase Hosting
 vía Workload Identity Federation.
 
 ```
-PR a master    ──► quality + code_review + security_review (Claude)
+PR a master    ──► quality + code_review + security_review (Gemini, advisory)
 merge a master ──► quality ──► deploy (Firebase Hosting)
 ```
 
