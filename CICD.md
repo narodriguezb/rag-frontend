@@ -71,6 +71,7 @@ seguridad) en cada PR a `master`, y **deploy** a Firebase Hosting al mergear a `
 | TypeScript `tsc -b` | dev dep | type-check (en el build) |
 | vitest + `@vitest/coverage-v8` | dev dep | tests + cobertura (`coverage/lcov.info`) |
 | Stryker (`@stryker-mutator/core` + `vitest-runner`) | dev dep | mutation testing (break ≥50%) |
+| Gitleaks | `gitleaks/gitleaks-action@v2` | escaneo de secretos (**gate pre-merge**, en `quality`) |
 | Trivy | `aquasecurity/trivy-action@master` | escaneo de vulnerabilidades (filesystem/deps) |
 | SonarQube Cloud | `SonarSource/sonarqube-scan-action@v4` | análisis estático + cobertura |
 | Snyk | GitHub App (check `security/snyk`) | vulnerabilidades de deps (aparte del workflow) |
@@ -121,6 +122,7 @@ Runner `ubuntu-latest`, Node 20 con caché de npm. Pasos en orden:
 
 | # | Paso | Comando | Falla si… |
 |---|------|---------|-----------|
+| 0 | Gitleaks (secretos) | `gitleaks/gitleaks-action@v2` (historial git) | encuentra un secreto en el repo |
 | 1 | Lint | `npm run lint` (ESLint flat config) | hay errores de lint |
 | 2 | Type-check + build | `npm run build` (`tsc -b` + `vite build`); inyecta `VITE_API_URL` y `VITE_BUILD_VERSION` | hay errores de tipos o de build |
 | 3 | Tests + cobertura | `npm run coverage` (vitest + v8) | falla un test; genera `coverage/lcov.info` para SonarQube |
