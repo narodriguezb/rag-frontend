@@ -1,52 +1,53 @@
 # Course Materials RAG — Frontend
 
-React + TypeScript + Tailwind CSS (Vite) frontend for the Course Materials RAG system. Talks to the FastAPI backend (separate repo) over HTTP.
+Frontend React + TypeScript + Tailwind CSS (Vite) del sistema Course Materials RAG. Se comunica con
+el backend FastAPI (repo aparte) por HTTP.
 
-## Requirements
+## Requisitos
 
 - Node 20+
-- The backend running at `http://localhost:8000`
+- El backend corriendo en `http://localhost:8000`
 
-## Setup
+## Instalación
 
 ```bash
 npm install
-cp .env.example .env   # set VITE_API_URL if the backend is elsewhere
+cp .env.example .env   # setear VITE_API_URL si el backend está en otra URL
 ```
 
-## Run
+## Ejecutar
 
 ```bash
-npm run dev      # dev server at http://localhost:5173
-npm run build    # production build into dist/
-npm run preview  # preview the production build
+npm run dev      # dev server en http://localhost:5173
+npm run build    # build de producción en dist/
+npm run preview  # previsualiza el build de producción
 ```
 
-## Configuration
+## Configuración
 
-`VITE_API_URL` (default `http://localhost:8000/api`) points at the backend API.
+`VITE_API_URL` (default `http://localhost:8000/api`) apunta a la API del backend.
 
-## Structure
+## Estructura
 
 ```
 src/
-  api/client.ts          typed fetch wrappers (query, courses)
-  hooks/useChat.ts        chat + session state
+  api/client.ts          wrappers tipados de fetch (query, courses)
+  hooks/useChat.ts        estado de chat + sesión
   components/             Sidebar, ChatMessages, Message, ChatInput, ...
-  observability/sentry.ts Sentry init (no-op without DSN)
-  types.ts                shared API/domain types
+  observability/sentry.ts init de Sentry (no-op sin DSN)
+  types.ts                tipos compartidos de API/dominio
 ```
 
-## Observability
+## Observabilidad
 
-Error + performance monitoring via **Sentry** (`@sentry/react`). Set `VITE_SENTRY_DSN` (in `.env`
-locally, GitHub secret `VITE_SENTRY_DSN` in CI) to enable it; without a DSN it is a no-op.
+Monitoreo de errores y performance vía **Sentry** (`@sentry/react`). Setear `VITE_SENTRY_DSN` (en
+`.env` localmente, secret `VITE_SENTRY_DSN` en CI) para habilitarlo; sin DSN es un no-op.
 
 ## CI/CD
 
-Pipeline de GitHub Actions (`.github/workflows/ci.yml`): en cada **PR a `master`** corren los
-gates de calidad y las reviews de Gemini; al **mergear a `master`** se despliega a Firebase Hosting
-vía Workload Identity Federation.
+Pipeline de GitHub Actions (`.github/workflows/ci.yml`): en cada **PR a `master`** corren los gates
+de calidad y las reviews de Gemini; al **mergear a `master`** se despliega a Firebase Hosting vía
+Workload Identity Federation.
 
 ```
 PR a master    ──► quality + code_review + security_review (Gemini, advisory)
@@ -54,4 +55,4 @@ merge a master ──► quality ──► deploy (Firebase Hosting)
 ```
 
 📄 **Documentación completa del flujo en [`CICD.md`](CICD.md)** — cada job paso a paso, gates y
-umbrales, protección de rama, autenticación WIF, secrets, despliegue y troubleshooting.
+umbrales, protección de rama, autenticación WIF, secrets y troubleshooting.

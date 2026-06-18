@@ -1,93 +1,103 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guía para Claude Code (claude.ai/code) al trabajar en este repositorio.
 
-## Project Overview
+## Descripción del proyecto
 
-Course Materials RAG — Frontend. A React + TypeScript single-page app built with Vite and styled with Tailwind CSS. It provides a chat interface to query course materials and renders intelligent, context-aware answers (with sources) returned by the FastAPI backend (separate repo: `../rag-backend`).
+Course Materials RAG — Frontend. Single-page app React + TypeScript construida con Vite y estilada
+con Tailwind CSS. Ofrece una interfaz de chat para consultar materiales de curso y renderiza
+respuestas con contexto (y fuentes) devueltas por el backend FastAPI (repo aparte: `../rag-backend`).
 
-The app has no backend of its own — all data comes from the RAG API over HTTP.
+La app no tiene backend propio — todos los datos vienen de la API RAG por HTTP.
 
-## Development Commands
+## Comandos de desarrollo
 
-### Local Development
+### Desarrollo local
 ```bash
-npm install           # Install dependencies
-npm run dev           # Start Vite dev server at http://localhost:5173
+npm install           # instala dependencias
+npm run dev           # dev server de Vite en http://localhost:5173
 ```
 
-### Building
+### Build
 ```bash
-npm run build         # Type-check (tsc -b) + production build into dist/
-npm run preview       # Preview the production build locally
+npm run build         # type-check (tsc -b) + build de producción en dist/
+npm run preview       # previsualiza el build de producción
 ```
 
-## Architecture
+## Arquitectura
 
-### Entry Point
-- **`src/main.tsx`**: Mounts the React tree (`<App />`) into `#root`, imports global `index.css`.
-- **`src/App.tsx`**: Layout shell — sidebar + chat column. Wires the `useChat` hook to the UI.
+### Entry point
+- **`src/main.tsx`**: monta el árbol React (`<App />`) en `#root`, importa el `index.css` global.
+- **`src/App.tsx`**: shell de layout — sidebar + columna de chat. Conecta el hook `useChat` a la UI.
 
-### State
-- **`src/hooks/useChat.ts`**: Owns chat state — message list, loading flag, and the session id (`useRef`). Exposes `sendMessage(query)`. The backend session id is captured from the first response and reused on subsequent calls.
+### Estado
+- **`src/hooks/useChat.ts`**: dueño del estado de chat — lista de mensajes, flag de loading y el
+  session id (`useRef`). Expone `sendMessage(query)`. El session id del backend se captura de la
+  primera respuesta y se reutiliza en las siguientes.
 
-### API Integration
-- **`src/api/client.ts`**: Typed `fetch` wrappers — no axios.
+### Integración con la API
+- **`src/api/client.ts`**: wrappers tipados de `fetch` — sin axios.
   - `postQuery(query, sessionId)` → `POST {VITE_API_URL}/query`
   - `getCourseStats()` → `GET {VITE_API_URL}/courses`
-- Base URL comes from `VITE_API_URL` (default `http://localhost:8000/api`).
-- Shared API/domain types live in **`src/types.ts`** (`Source`, `QueryResponse`, `CourseStats`, `ChatMessage`).
+- La base URL viene de `VITE_API_URL` (default `http://localhost:8000/api`).
+- Los tipos compartidos de API/dominio viven en **`src/types.ts`** (`Source`, `QueryResponse`,
+  `CourseStats`, `ChatMessage`).
 
-### Components (`src/components/`)
-| Component | Responsibility |
+### Componentes (`src/components/`)
+| Componente | Responsabilidad |
 |---|---|
-| `Sidebar` | Left column container (course stats + suggested questions) |
-| `CourseStatsPanel` | Fetches `/courses` on mount, renders count + titles |
-| `SuggestedQuestions` | Static prompt buttons that trigger a query |
-| `CollapsibleSection` | Reusable collapsible used by both sidebar sections |
-| `ChatMessages` | Scrollable message list, auto-scrolls to bottom |
-| `Message` | A single bubble; renders markdown + collapsible sources for assistant turns |
-| `ChatInput` | Text input + send button |
-| `LoadingDots` | Three-dot typing indicator |
+| `Sidebar` | Contenedor de la columna izquierda (course stats + preguntas sugeridas) |
+| `CourseStatsPanel` | Fetchea `/courses` al montar, renderiza conteo + títulos |
+| `SuggestedQuestions` | Botones de prompt estáticos que disparan una query |
+| `CollapsibleSection` | Colapsable reusable usado por ambas secciones del sidebar |
+| `ChatMessages` | Lista de mensajes con scroll, auto-scroll al fondo |
+| `Message` | Una burbuja; renderiza markdown + fuentes colapsables en turnos del asistente |
+| `ChatInput` | Input de texto + botón de enviar |
+| `LoadingDots` | Indicador de "escribiendo" de tres puntos |
 
 ### Markdown
-Assistant answers are rendered with `react-markdown` + `remark-gfm`. Markdown element styling lives under the `.markdown` class in `src/index.css`.
+Las respuestas del asistente se renderizan con `react-markdown` + `remark-gfm`. El estilado de los
+elementos markdown vive bajo la clase `.markdown` en `src/index.css`.
 
-### Observability (Sentry)
-Error and performance monitoring via `@sentry/react`, initialized in `src/observability/sentry.ts` (`initSentry()`), wired in `src/main.tsx` (init + `Sentry.ErrorBoundary`). `useChat` reports chat errors with `Sentry.captureException`. **It is a no-op unless `VITE_SENTRY_DSN` is set**, so it never breaks local dev without a DSN. In CI the build receives the DSN from the GitHub secret `VITE_SENTRY_DSN`.
+### Observabilidad (Sentry)
+Monitoreo de errores y performance vía `@sentry/react`, inicializado en `src/observability/sentry.ts`
+(`initSentry()`), conectado en `src/main.tsx` (init + `Sentry.ErrorBoundary`). `useChat` reporta
+errores de chat con `Sentry.captureException`. **Es un no-op salvo que `VITE_SENTRY_DSN` esté
+seteado**, así que nunca rompe el desarrollo local sin DSN. En CI el build recibe el DSN desde el
+secret `VITE_SENTRY_DSN`.
 
-## Environment Variables
-Vite only exposes vars prefixed with `VITE_`:
-- `VITE_API_URL`: Backend API base URL (default `http://localhost:8000/api`)
-- `VITE_SENTRY_DSN`: Sentry DSN (optional; Sentry is disabled when empty)
+## Variables de entorno
+Vite solo expone vars con prefijo `VITE_`:
+- `VITE_API_URL`: base URL de la API del backend (default `http://localhost:8000/api`)
+- `VITE_SENTRY_DSN`: DSN de Sentry (opcional; Sentry se deshabilita cuando está vacío)
 
-Files:
-- `.env`: Local development (gitignored)
-- `.env.example`: Committed template — keep its keys in sync with `.env`
+Archivos:
+- `.env`: desarrollo local (gitignored)
+- `.env.example`: template commiteado — mantener sus keys en sync con `.env`
 
-## Development Guidelines
+## Guías de desarrollo
 
-### Styling Preferences
-- **Primary**: Use Tailwind CSS utility classes for all new components, via the `className` prop.
-- **Fallback**: Use inline `style` / a `<style>` rule in `index.css` only when Tailwind cannot express it (e.g. dynamic keyframe delays in `LoadingDots`).
-- The dark theme is defined as Tailwind theme tokens in `src/index.css` (`@theme { --color-* }`). Reuse tokens (`bg-surface`, `text-text-secondary`, `border-border`, `bg-primary`, …) instead of hardcoding hex values.
-- **NEVER use `!important`** — solve specificity by proper utilities or inline styles.
+### Preferencias de estilado
+- **Primario**: usar clases utility de Tailwind CSS para todos los componentes nuevos, vía el prop
+  `className`.
+- **Fallback**: usar `style` inline / una regla `<style>` en `index.css` solo cuando Tailwind no lo
+  pueda expresar (p. ej. delays dinámicos de keyframes en `LoadingDots`).
+- El tema oscuro está definido como tokens de tema de Tailwind en `src/index.css` (`@theme
+  { --color-* }`). Reusar tokens (`bg-surface`, `text-text-secondary`, `border-border`,
+  `bg-primary`, …) en lugar de hardcodear valores hex.
+- **Nunca usar `!important`** — resolver la especificidad con utilities apropiadas o estilos inline.
 
-### Code Quality
-- **Always remove comments at the end**: after implementing changes, clean up explanatory comments. Keep code self-documenting through clear names. Only keep comments for genuinely non-obvious logic.
-- Scan files you touch — remove unused imports, variables, and dead branches.
+### Calidad de código
+- **Eliminar comentarios al final:** tras implementar cambios, limpiar comentarios explicativos.
+  Mantener el código autoexplicativo con nombres claros. Conservar comentarios solo para lógica
+  genuinamente no obvia.
+- Al tocar un archivo, eliminar imports, variables y ramas muertas que queden sin uso.
 
 ### TypeScript
-- Strict mode enabled (`noUnusedLocals` / `noUnusedParameters` on).
-- Shared types in `src/types.ts`; env typing in `src/vite-env.d.ts`.
+- Strict mode habilitado (`noUnusedLocals` / `noUnusedParameters`).
+- Tipos compartidos en `src/types.ts`; typing de env en `src/vite-env.d.ts`.
 
-### Component Structure
-- One component per file under `src/components/`.
-- Components are presentational where possible; chat state lives in `useChat`, not in components.
-
-## Gotchas Claude tends to get wrong here
-- Adding a hex color instead of reusing a `--color-*` theme token from `index.css`.
-- Calling `fetch` directly in a component instead of going through `src/api/client.ts`.
-- Forgetting to keep `.env.example` in sync when adding a new `VITE_` var.
-- Reading the session id from component state instead of the `sessionId` ref in `useChat`.
-- Reaching for axios — this project uses native `fetch`.
+### Estructura de componentes
+- Un componente por archivo en `src/components/`.
+- Componentes presentacionales donde sea posible; el estado de chat vive en `useChat`, no en los
+  componentes.
